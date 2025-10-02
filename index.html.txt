@@ -9,7 +9,7 @@
     <pre id="out"></pre>
 
     <script>
-      const HOOK_URL = "https://hooks.zapier.com/hooks/catch/XXXX/YYYY"; // כתובת ה-WebHook שלך
+      const HOOK_URL = "https://hooks.zapier.com/hooks/catch/20378221/u1j9fqy/"; // כתובת ה-WebHook שלך
 
       document.getElementById("send").onclick = async () => {
         const res = await fetch(HOOK_URL, {
@@ -22,4 +22,5 @@
       };
     </script>
   </body>
+
 </html>
