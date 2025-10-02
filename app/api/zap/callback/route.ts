@@ -22,8 +22,8 @@ export async function POST(request: Request) {
           const r = JSON.parse(rStr);
           if (r && typeof r === "object") {
             normalized = { ...payload, result: r };
-            if (!normalized.fixed_curl && (r.fixed_curl || r.curl || (r.curl_fix && (r.curl_fix.fixed_curl || r.curl_fix.curl)))) {
-              normalized.fixed_curl = r.fixed_curl || r.curl || (r.curl_fix?.fixed_curl || r.curl_fix?.curl);
+            if (!normalized.fixed_curl && (r.fixed_curl || r.curl || (r.curl && (r.curl.fixed_curl || r.curl.curl)) || (r.curl_fix && (r.curl_fix.fixed_curl || r.curl_fix.curl)))) {
+              normalized.fixed_curl = r.fixed_curl || r.curl || (r.curl?.fixed_curl || r.curl?.curl) || (r.curl_fix?.fixed_curl || r.curl_fix?.curl);
             }
           }
         } catch {
@@ -40,9 +40,12 @@ export async function POST(request: Request) {
         }
       } else if (payload && typeof payload.result === "object" && payload.result) {
         const r = payload.result as any;
-        if (!payload.fixed_curl && (r.fixed_curl || r.curl || (r.curl_fix && (r.curl_fix.fixed_curl || r.curl_fix.curl)))) {
-          normalized = { ...payload, fixed_curl: r.fixed_curl || r.curl || (r.curl_fix?.fixed_curl || r.curl_fix?.curl) };
+        if (!payload.fixed_curl && (r.fixed_curl || r.curl || (r.curl && (r.curl.fixed_curl || r.curl.curl)) || (r.curl_fix && (r.curl_fix.fixed_curl || r.curl_fix.curl)))) {
+          normalized = { ...payload, fixed_curl: r.fixed_curl || r.curl || (r.curl?.fixed_curl || r.curl?.curl) || (r.curl_fix?.fixed_curl || r.curl_fix?.curl) };
         }
+      }
+      if (!normalized.fixed_curl && payload && payload.curl && typeof payload.curl === "object") {
+        normalized.fixed_curl = payload.curl.fixed_curl || payload.curl.curl;
       }
       if (!normalized.fixed_curl && payload && payload.curl_fix && typeof payload.curl_fix === "object") {
         normalized.fixed_curl = payload.curl_fix.fixed_curl || payload.curl_fix.curl;
