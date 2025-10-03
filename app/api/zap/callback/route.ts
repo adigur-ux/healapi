@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 
 type CallbackRecord = {
   request_id: string;
+  fixed_curl: string | null;
   result: unknown;
-  status?: string;
+  original: unknown;
+  status: string;
 };
 
 const CORS_HEADERS: Record<string, string> = {
@@ -24,33 +26,51 @@ export async function OPTIONS() {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json().catch(() => ({} as any));
+    const payloadUnknown = await request.json().catch(() => ({}));
+    const payload = payloadUnknown as Record<string, unknown>;
     console.log("/api/zap/callback received:", JSON.stringify(payload, null, 2));
 
-    const requestId = (payload?.request_id ?? "").toString();
+    const requestId = String((payload["request_id"] ?? payload["attempt"] ?? payload["id"]) ?? "");
 
     // Normalize result: if it's a JSON-looking string, parse safely; otherwise keep as is
-    const rawResult = payload?.result as unknown;
-    let normalizedResult: unknown = rawResult;
+    const rawResult = payload["result"] as unknown;
+    let parsedResult: unknown = rawResult;
     if (typeof rawResult === "string") {
       const trimmed = rawResult.trim();
       const looksJson = (trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"));
       if (looksJson) {
         try {
-          normalizedResult = JSON.parse(trimmed);
+          parsedResult = JSON.parse(trimmed);
         } catch {
-          normalizedResult = rawResult; // keep string if parsing fails
+          parsedResult = rawResult; // keep string if parsing fails
         }
       } else {
-        normalizedResult = rawResult;
+        parsedResult = rawResult;
       }
     }
+
+    // Extract fixed_curl from payload or parsed result if present
+    let fixedCurl: string | null = null;
+    if (typeof payload["fixed_curl"] === "string" && (payload["fixed_curl"] as string).trim().length > 0) {
+      fixedCurl = (payload["fixed_curl"] as string).trim();
+    } else if (parsedResult && typeof parsedResult === "object") {
+      const resultObj = parsedResult as Record<string, unknown>;
+      if (typeof resultObj["fixed_curl"] === "string" && (resultObj["fixed_curl"] as string).trim().length > 0) {
+        fixedCurl = (resultObj["fixed_curl"] as string).trim();
+      }
+    }
+
+    const status = typeof payload["status"] === "string" && (payload["status"] as string).trim().length > 0
+      ? (payload["status"] as string)
+      : "completed";
 
     const record: CallbackRecord | null = requestId
       ? {
           request_id: requestId,
-          result: normalizedResult,
-          status: typeof payload?.status === "string" ? payload.status : (payload?.status as any) ?? "received",
+          fixed_curl: fixedCurl,
+          result: parsedResult,
+          original: payload,
+          status,
         }
       : null;
 
@@ -72,12 +92,20 @@ export async function GET(request: Request) {
   }
   const record = memoryStore.__zapCallbackStore?.[requestId];
   if (!record) {
-    return NextResponse.json({ pending: true }, { status: 404, headers: CORS_HEADERS });
+    return NextResponse.json({ found: false, pending: true }, { status: 404, headers: CORS_HEADERS });
   }
-  return NextResponse.json(record, { status: 200, headers: CORS_HEADERS });
+  return NextResponse.json(
+    {
+      found: true,
+      request_id: record.request_id,
+      payload: {
+        fixed_curl: record.fixed_curl,
+        result: record.result,
+        status: record.status,
+      },
+    },
+    { status: 200, headers: CORS_HEADERS }
+  );
 }
-
-
-
 
 
