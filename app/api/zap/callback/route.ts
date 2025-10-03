@@ -1,60 +1,54 @@
 import { NextResponse } from "next/server";
 
+type CallbackRecord = {
+  request_id: string;
+  result: unknown;
+  status?: string;
+};
+
 // Naive in-memory store (per server instance) for callback results
 const memoryStore = globalThis as unknown as {
-  __zapCallbackStore?: Record<string, any>;
+  __zapCallbackStore?: Record<string, CallbackRecord>;
 };
 if (!memoryStore.__zapCallbackStore) memoryStore.__zapCallbackStore = {};
 
 export async function POST(request: Request) {
   try {
-    // Echo back whatever Zapier sent and log it for verification
-    const payload = await request.json().catch(() => ({}));
+    const payload = await request.json().catch(() => ({} as any));
     console.log("/api/zap/callback received:", JSON.stringify(payload, null, 2));
-    // Try to persist by request_id or attempt if present
-    const requestId = (payload?.request_id || payload?.attempt || payload?.id || "").toString();
-    // Normalize: if payload.result is a JSON string, parse and lift fixed_curl
-    let normalized: any = payload;
-    try {
-      if (payload && typeof payload.result === "string") {
-        const rStr = (payload.result as string).trim();
+
+    const requestId = (payload?.request_id ?? "").toString();
+
+    // Normalize result: if it's a JSON-looking string, parse safely; otherwise keep as is
+    const rawResult = payload?.result as unknown;
+    let normalizedResult: unknown = rawResult;
+    if (typeof rawResult === "string") {
+      const trimmed = rawResult.trim();
+      const looksJson = (trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"));
+      if (looksJson) {
         try {
-          const r = JSON.parse(rStr);
-          if (r && typeof r === "object") {
-            normalized = { ...payload, result: r };
-            if (!normalized.fixed_curl && (r.fixed_curl || r.curl || (r.curl && (r.curl.fixed_curl || r.curl.curl)) || (r.curl_fix && (r.curl_fix.fixed_curl || r.curl_fix.curl)))) {
-              normalized.fixed_curl = r.fixed_curl || r.curl || (r.curl?.fixed_curl || r.curl?.curl) || (r.curl_fix?.fixed_curl || r.curl_fix?.curl);
-            }
-          }
+          normalizedResult = JSON.parse(trimmed);
         } catch {
-          if (rStr.startsWith("curl")) {
-            normalized = { ...payload, result: { fixed_curl: rStr } };
-            normalized.fixed_curl = rStr;
-          } else {
-            const match = rStr.match(/\"fixed_curl\"\s*:\s*\"([^\"]+)/);
-            if (match && match[1]) {
-              normalized = { ...payload, result: { fixed_curl: match[1] } };
-              normalized.fixed_curl = match[1];
-            }
-          }
+          normalizedResult = rawResult; // keep string if parsing fails
         }
-      } else if (payload && typeof payload.result === "object" && payload.result) {
-        const r = payload.result as any;
-        if (!payload.fixed_curl && (r.fixed_curl || r.curl || (r.curl && (r.curl.fixed_curl || r.curl.curl)) || (r.curl_fix && (r.curl_fix.fixed_curl || r.curl_fix.curl)))) {
-          normalized = { ...payload, fixed_curl: r.fixed_curl || r.curl || (r.curl?.fixed_curl || r.curl?.curl) || (r.curl_fix?.fixed_curl || r.curl_fix?.curl) };
-        }
+      } else {
+        normalizedResult = rawResult;
       }
-      if (!normalized.fixed_curl && payload && payload.curl && typeof payload.curl === "object") {
-        normalized.fixed_curl = payload.curl.fixed_curl || payload.curl.curl;
-      }
-      if (!normalized.fixed_curl && payload && payload.curl_fix && typeof payload.curl_fix === "object") {
-        normalized.fixed_curl = payload.curl_fix.fixed_curl || payload.curl_fix.curl;
-      }
-    } catch {}
-    if (requestId) {
-      memoryStore.__zapCallbackStore![requestId] = normalized;
     }
-    return NextResponse.json(normalized, { status: 200 });
+
+    const record: CallbackRecord | null = requestId
+      ? {
+          request_id: requestId,
+          result: normalizedResult,
+          status: typeof payload?.status === "string" ? payload.status : (payload?.status as any) ?? "received",
+        }
+      : null;
+
+    if (record) {
+      memoryStore.__zapCallbackStore![requestId] = record;
+    }
+
+    return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "error" }, { status: 400 });
   }
@@ -62,15 +56,15 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const requestId = (url.searchParams.get("request_id") || url.searchParams.get("id") || "").toString();
+  const requestId = (url.searchParams.get("request_id") || "").toString();
   if (!requestId) {
     return NextResponse.json({ error: "request_id required" }, { status: 400 });
   }
-  const payload = memoryStore.__zapCallbackStore?.[requestId];
-  if (!payload) {
-    return NextResponse.json({ found: false }, { status: 200 });
+  const record = memoryStore.__zapCallbackStore?.[requestId];
+  if (!record) {
+    return NextResponse.json({ pending: true }, { status: 404 });
   }
-  return NextResponse.json({ found: true, payload }, { status: 200 });
+  return NextResponse.json(record, { status: 200 });
 }
 
 
